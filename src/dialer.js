@@ -1,5 +1,8 @@
 
+'use strict';
+
 // Places calls with a cap on simultaneous calls (CONCURRENCY).
+
 const cfg = require('./config');
 const store = require('./store');
 const { placeCall } = require('./edesy');
@@ -15,8 +18,11 @@ function activeCount() {
   for (const lead of store.list()) {
     if (lead.status !== 'calling') continue;
 
+    // Mark calls as no_response if they remain stuck for too long.
     if (lead.calledAt && Date.now() - lead.calledAt > STUCK_MS) {
-      store.update(lead.id, { status: 'no_response' });
+      store.update(lead.id, {
+        status: 'no_response',
+      });
     } else {
       count++;
     }
@@ -38,7 +44,7 @@ async function start() {
       // No pending leads and no active calls: queue is finished.
       if (!next && active === 0) break;
 
-      // Wait if there are no pending leads, or the concurrency limit is reached.
+      // Wait if there are no pending leads or concurrency is reached.
       if (!next || active >= cfg.concurrency) {
         await sleep(500);
         continue;

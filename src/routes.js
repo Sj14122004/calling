@@ -4,12 +4,14 @@
 const fs = require('fs');
 const path = require('path');
 const router = require('express').Router();
-const cfg = require('./config');
 const store = require('./store');
-const flow = require('./flow');
 const dialer = require('./dialer');
 
 const DEBUG = path.join(__dirname, '..', 'data', 'debug.log');
+
+// ==========================================
+// Debug logging
+// ==========================================
 
 const dbg = (tag, req) => {
   fs.appendFile(
@@ -26,12 +28,9 @@ const dbg = (tag, req) => {
 
 const merged = (req) => ({ ...req.query, ...(req.body || {}) });
 
-const digitOf = (body) =>
-  String(body.Digits ?? body.digits ?? body.Digit ?? body.digit ?? body.dtmf ?? '')
-    .trim()
-    .charAt(0);
-
-// ---------- CSV parser (numbers only) ----------
+// ==========================================
+// CSV parser (numbers only)
+// ==========================================
 
 function parseCsv(text) {
   const lines = String(text || '')
@@ -42,7 +41,10 @@ function parseCsv(text) {
 
   if (!lines.length) return [];
 
-  const first = lines[0].replace(/^["']|["']$/g, '').trim().toLowerCase();
+  const first = lines[0]
+    .replace(/^["']|["']$/g, '')
+    .trim()
+    .toLowerCase();
 
   const hasHeader = [
     'phone',
@@ -60,9 +62,11 @@ function parseCsv(text) {
   }));
 }
 
-// ---------- Edesy callbacks ----------
+// ==========================================
+// Edesy qualified lead webhook
+// ==========================================
 
-// Permanently save qualified lead from Edesy HTTP Request node
+// Permanently save qualified lead from Edesy Studio HTTP Request node
 router.post('/edesy/lead', (req, res) => {
   dbg('qualified-lead', req);
 
@@ -87,7 +91,7 @@ router.post('/edesy/lead', (req, res) => {
     });
   }
 
-  res.json({
+  return res.json({
     success: true,
     phone,
     outcome: 'lead',
@@ -95,50 +99,9 @@ router.post('/edesy/lead', (req, res) => {
   });
 });
 
-// ---------- Legacy Edesy callbacks (kept) ----------
-
-router.all('/edesy/answer', (req, res) => {
-  dbg('answer', req);
-
-  const lead = store.get(req.query.lead);
-
-  if (!lead) return res.json(flow.finish('removed', cfg.baseUrl));
-
-  res.json(flow.ask(cfg.baseUrl, lead.id, 'q1'));
-});
-
-router.all('/edesy/gather', (req, res) => {
-  dbg('gather', req);
-
-  const lead = store.get(req.query.lead);
-
-  if (!lead) return res.json(flow.finish('removed', cfg.baseUrl));
-
-  const key = req.query.step;
-
-  const result = flow.handle({
-    base: cfg.baseUrl,
-    leadId: lead.id,
-    key,
-    digit: digitOf(merged(req)),
-    attempt: Number(req.query.try) || 0,
-  });
-
-  const patch = {
-    answers: {
-      ...lead.answers,
-      ...(result.answer ? { [key]: result.answer } : {}),
-    },
-  };
-
-  if (result.outcome) {
-    patch.status = result.outcome;
-    patch.finishedAt = Date.now();
-  }
-
-  store.update(lead.id, patch);
-  res.json(result.voiceml);
-});
+// ==========================================
+// Edesy call status webhook
+// ==========================================
 
 router.all('/edesy/status', (req, res) => {
   dbg('status', req);
@@ -147,7 +110,11 @@ router.all('/edesy/status', (req, res) => {
   const body = merged(req);
 
   const status = String(
-    body.status || body.CallStatus || body.call_status || body.event || ''
+    body.status ||
+      body.CallStatus ||
+      body.call_status ||
+      body.event ||
+      ''
   ).toLowerCase();
 
   if (lead && lead.status === 'calling') {
@@ -164,61 +131,72 @@ router.all('/edesy/status', (req, res) => {
     }
   }
 
-  res.sendStatus(200);
+  return res.sendStatus(200);
 });
 
-// ---------- Dashboard API ----------
+// ==========================================
+// Dashboard API
+// Authentication removed
+// ==========================================
 
-const guard = (req, res, next) =>
-  !cfg.adminToken || req.get('x-admin-token') === cfg.adminToken
-    ? next()
-    : res.status(401).json({ error: 'unauthorized' });
-
-router.get('/api/leads', guard, (req, res) => {
-  res.json({
+// Get active leads and counts
+router.get('/api/leads', (req, res) => {
+  return res.json({
     counts: store.counts(),
     leads: store.list().reverse(),
   });
 });
 
-router.post('/api/leads', guard, (req, res) => {
-  res.json(store.addMany(req.body.numbers || ''));
+// Add manually entered numbers
+router.post('/api/leads', (req, res) => {
+  return res.json(store.addMany(req.body.numbers || ''));
 });
 
-router.post('/api/leads/import', guard, (req, res) => {
+// Import CSV
+router.post('/api/leads/import', (req, res) => {
   try {
     const csv = req.body.csv;
 
     if (typeof csv !== 'string' || !csv.trim()) {
-      return res.status(400).json({ error: 'CSV text is required' });
+      return res.status(400).json({
+        error: 'CSV text is required',
+      });
     }
 
     const rows = parseCsv(csv);
     const result = store.addCsvRows(rows);
 
-    res.json({
+    return res.json({
       success: true,
       ...result,
       totalRows: rows.length,
     });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    return res.status(400).json({
+      error: error.message,
+    });
   }
 });
 
-router.post('/api/start', guard, (req, res) => {
+// Start outbound calling
+router.post('/api/start', (req, res) => {
   const pending = store.counts().pending || 0;
 
-  dialer.start().catch((error) => console.error('dialer:', error));
+  dialer.start().catch((error) => {
+    console.error('dialer:', error);
+  });
 
-  res.json({
+  return res.json({
     started: true,
     pending,
   });
 });
 
-// Export qualified leads as numbers only
-router.get('/api/export', guard, (req, res) => {
+// ==========================================
+// Export leads
+// ==========================================
+
+router.get('/api/export', (req, res) => {
   const status = String(req.query.status || 'lead');
 
   const phones =
@@ -235,7 +213,11 @@ router.get('/api/export', guard, (req, res) => {
     `attachment; filename="${status}-leads.csv"`
   );
 
-  res.type('text/csv').send(csv);
+  return res.type('text/csv').send(csv);
 });
+
+// ==========================================
+// Export router
+// ==========================================
 
 module.exports = router;

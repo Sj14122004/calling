@@ -1,15 +1,18 @@
 
+'use strict';
+
 const { edesy } = require('./config');
 
 async function placeCall({ to, referenceId, statusCallbackUrl }) {
-  const phoneNumber = String(to).trim();
+  const phoneNumber = String(to ?? '').trim();
 
   if (!phoneNumber) {
     throw new Error('Phone number is required');
   }
 
   const idempotencyKey =
-    referenceId || `lead-call-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    referenceId ||
+    `lead-call-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   const requestBody = {
     flow_id: edesy.flowId,

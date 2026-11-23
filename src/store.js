@@ -5,19 +5,32 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+// ==========================================
+// Storage paths
+// ==========================================
+
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const LEADS_FILE = path.join(DATA_DIR, 'leads.json');
 const QUALIFIED_FILE = path.join(DATA_DIR, 'qualified-leads.json');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// ==========================================
+// In-memory storage
+// ==========================================
+
 const leads = new Map();
 const byPhone = new Map();
 const qualified = new Map();
 
+// ==========================================
+// File loading
+// ==========================================
+
 function loadFile(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(data) ? data : [];
   } catch {
     return [];
   }
@@ -34,6 +47,10 @@ for (const item of loadFile(QUALIFIED_FILE)) {
   qualified.set(item.phone, item);
 }
 
+// ==========================================
+// Debounced persistence
+// ==========================================
+
 let leadsTimer;
 let qualifiedTimer;
 
@@ -41,10 +58,20 @@ function saveLeads() {
   clearTimeout(leadsTimer);
 
   leadsTimer = setTimeout(() => {
-    const temp = LEADS_FILE + '.tmp';
+    const temp = `${LEADS_FILE}.tmp`;
+    const data = JSON.stringify([...leads.values()], null, 2);
 
-    fs.writeFile(temp, JSON.stringify([...leads.values()], null, 2), (err) => {
-      if (!err) fs.rename(temp, LEADS_FILE, () => {});
+    fs.writeFile(temp, data, (err) => {
+      if (err) {
+        console.error('Failed to save leads:', err);
+        return;
+      }
+
+      fs.rename(temp, LEADS_FILE, (renameErr) => {
+        if (renameErr) {
+          console.error('Failed to replace leads file:', renameErr);
+        }
+      });
     });
   }, 200);
 }
@@ -53,48 +80,69 @@ function saveQualified() {
   clearTimeout(qualifiedTimer);
 
   qualifiedTimer = setTimeout(() => {
-    const temp = QUALIFIED_FILE + '.tmp';
+    const temp = `${QUALIFIED_FILE}.tmp`;
+    const data = JSON.stringify([...qualified.values()], null, 2);
 
-    fs.writeFile(temp, JSON.stringify([...qualified.values()], null, 2), (err) => {
-      if (!err) fs.rename(temp, QUALIFIED_FILE, () => {});
+    fs.writeFile(temp, data, (err) => {
+      if (err) {
+        console.error('Failed to save qualified leads:', err);
+        return;
+      }
+
+      fs.rename(temp, QUALIFIED_FILE, (renameErr) => {
+        if (renameErr) {
+          console.error('Failed to replace qualified leads file:', renameErr);
+        }
+      });
     });
   }, 200);
 }
 
-// Normalize Indian phone numbers
+// ==========================================
+// Indian phone number normalization
+// ==========================================
+
 function normalize(raw) {
   const digits = String(raw ?? '').replace(/\D/g, '');
 
-  if (String(raw).trim().startsWith('+') && digits.length >= 11 && digits.length <= 14) {
-    return '+' + digits;
+  if (
+    String(raw).trim().startsWith('+') &&
+    digits.length >= 11 &&
+    digits.length <= 14
+  ) {
+    return `+${digits}`;
   }
 
   if (digits.length === 10) {
-    return '+91' + digits;
+    return `+91${digits}`;
   }
 
   if (digits.length === 11 && digits.startsWith('0')) {
-    return '+91' + digits.slice(1);
+    return `+91${digits.slice(1)}`;
   }
 
   if (digits.length === 12 && digits.startsWith('91')) {
-    return '+' + digits;
+    return `+${digits}`;
   }
 
   return null;
 }
 
+// ==========================================
 // Add manually pasted numbers
+// ==========================================
+
 function addMany(text) {
   let added = 0;
   let duplicate = 0;
   let invalid = 0;
 
-  for (const raw of String(text)
+  const numbers = String(text)
     .split(/[\n,;]+/)
     .map((value) => value.trim())
-    .filter(Boolean)) {
+    .filter(Boolean);
 
+  for (const raw of numbers) {
     const phone = normalize(raw);
 
     if (!phone) {
@@ -124,10 +172,14 @@ function addMany(text) {
   }
 
   saveLeads();
+
   return { added, duplicate, invalid };
 }
 
-// Import numbers from CSV
+// ==========================================
+// Import CSV rows
+// ==========================================
+
 function addCsvRows(rows) {
   let added = 0;
   let duplicate = 0;
@@ -163,10 +215,14 @@ function addCsvRows(rows) {
   }
 
   saveLeads();
+
   return { added, duplicate, invalid };
 }
 
-// Directly save qualified number from Edesy webhook
+// ==========================================
+// Save qualified number from Edesy webhook
+// ==========================================
+
 function addQualified(rawPhone) {
   const phone = normalize(rawPhone);
 
@@ -189,7 +245,7 @@ function addQualified(rawPhone) {
     };
   }
 
-  // Save permanently
+  // Permanently store qualified number
   qualified.set(phone, {
     phone,
     qualifiedAt: Date.now(),
@@ -214,21 +270,35 @@ function addQualified(rawPhone) {
   };
 }
 
-// Get active lead
-const get = (id) => leads.get(id);
+// ==========================================
+// Get a single active lead
+// ==========================================
 
-// Get active dashboard leads
-const list = () => [...leads.values()];
+function get(id) {
+  return leads.get(id);
+}
 
-// Update lead
+// ==========================================
+// Get all active leads
+// ==========================================
+
+function list() {
+  return [...leads.values()];
+}
+
+// ==========================================
+// Update lead status/data
+// ==========================================
+
 function update(id, patch) {
   const lead = leads.get(id);
 
-  if (!lead) return null;
+  if (!lead) {
+    return null;
+  }
 
   Object.assign(lead, patch);
 
-  // Final call statuses
   const finishedStatuses = [
     'lead',
     'removed',
@@ -238,7 +308,7 @@ function update(id, patch) {
   ];
 
   if (finishedStatuses.includes(lead.status)) {
-    // Save qualified number permanently
+    // Permanently save qualified numbers
     if (lead.status === 'lead') {
       qualified.set(lead.phone, {
         phone: lead.phone,
@@ -248,19 +318,24 @@ function update(id, patch) {
       saveQualified();
     }
 
-    // Remove from active dashboard storage
+    // Remove completed lead from active storage
     leads.delete(id);
     byPhone.delete(lead.phone);
 
     saveLeads();
+
     return lead;
   }
 
   saveLeads();
+
   return lead;
 }
 
-// Dashboard counts
+// ==========================================
+// Dashboard status counts
+// ==========================================
+
 function counts() {
   const result = {};
 
@@ -271,10 +346,17 @@ function counts() {
   return result;
 }
 
-// Get permanently saved qualified numbers
+// ==========================================
+// Get qualified numbers
+// ==========================================
+
 function getQualified() {
   return [...qualified.values()];
 }
+
+// ==========================================
+// Exports
+// ==========================================
 
 module.exports = {
   addMany,
