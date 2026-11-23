@@ -1,0 +1,309 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Edesy Lead Caller</title>
+  <style>
+    body {
+      font: 15px/1.5 system-ui, sans-serif;
+      max-width: 860px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #1c1f24;
+    }
+
+    textarea {
+      width: 100%;
+      height: 110px;
+      font: inherit;
+      padding: .6rem;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      box-sizing: border-box;
+    }
+
+    button, a.btn {
+      font: inherit;
+      padding: .5rem .9rem;
+      border: 1px solid #1c1f24;
+      background: #1c1f24;
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+
+    button.alt, a.alt {
+      background: #fff;
+      color: #1c1f24;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .row {
+      display: flex;
+      gap: .6rem;
+      flex-wrap: wrap;
+      margin: .6rem 0;
+      align-items: center;
+    }
+
+    .counts span {
+      margin-right: 1rem;
+    }
+
+    .section {
+      margin: 1.5rem 0;
+      padding: 1rem;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: .5rem;
+      border-bottom: 1px solid #e3e3e3;
+      word-break: break-word;
+    }
+
+    .lead {
+      color: #0a7a3b;
+      font-weight: 600;
+    }
+
+    .removed, .failed, .no_answer, .no_response {
+      color: #a33;
+    }
+
+    #msg {
+      font-weight: 500;
+    }
+
+    input[type="file"] {
+      max-width: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Edesy Lead Caller</h1>
+
+  <!-- CSV Import -->
+  <div class="section">
+    <h2>Import contacts from CSV</h2>
+    <p>CSV must contain a <b>phone</b> column. A <b>name</b> column is optional.</p>
+
+    <div class="row">
+      <input type="file" id="csvFile" accept=".csv,text/csv">
+      <button onclick="importCsv()">Import CSV</button>
+    </div>
+  </div>
+
+  <!-- Manual number entry -->
+  <div class="section">
+    <h2>Add phone numbers manually</h2>
+    <textarea id="nums" placeholder="Paste phone numbers, one per line (10-digit Indian or +91...)"></textarea>
+
+    <div class="row">
+      <button onclick="addNumbers()">Add numbers</button>
+      <button onclick="startCalls()">Start calling</button>
+      <a class="btn alt" id="exp" href="#">Download qualified leads CSV</a>
+    </div>
+  </div>
+
+  <div id="msg"></div>
+
+  <h2>Lead Status</h2>
+  <div class="counts" id="counts"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Number</th>
+        <th>Status</th>
+        <th>Answers</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+  const key = new URLSearchParams(location.search).get('key') || '';
+
+  const H = {
+    'Content-Type': 'application/json',
+    'x-admin-token': key
+  };
+
+  const message = (text) => {
+    document.getElementById('msg').textContent = text;
+  };
+
+  // Escape HTML to safely display contact data.
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(path, {
+      headers: H,
+      ...options
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  // Manual number import
+  async function addNumbers() {
+    try {
+      const result = await api('/api/leads', {
+        method: 'POST',
+        body: JSON.stringify({
+          numbers: document.getElementById('nums').value
+        })
+      });
+
+      message(`Added: ${result.added} | Duplicates: ${result.duplicate} | Invalid: ${result.invalid}`);
+
+      document.getElementById('nums').value = '';
+      await load();
+    } catch (error) {
+      message(`Error: ${error.message}`);
+    }
+  }
+
+  // CSV import
+  async function importCsv() {
+    const fileInput = document.getElementById('csvFile');
+    const file = fileInput.files[0];
+
+    if (!file) {
+      message('Please select a CSV file first.');
+      return;
+    }
+
+    try {
+      message('Reading CSV...');
+
+      const csv = await file.text();
+
+      const result = await api('/api/leads/import', {
+        method: 'POST',
+        body: JSON.stringify({ csv })
+      });
+
+      message(
+        `CSV imported — Added: ${result.added} | Duplicates: ${result.duplicate} | Invalid: ${result.invalid} | Rows: ${result.totalRows}`
+      );
+
+      fileInput.value = '';
+      await load();
+    } catch (error) {
+      message(`CSV import failed: ${error.message}`);
+    }
+  }
+
+  // Start outbound calls
+  async function startCalls() {
+    try {
+      const result = await api('/api/start', {
+        method: 'POST'
+      });
+
+      message(`Calling started. Pending numbers: ${result.pending}`);
+    } catch (error) {
+      message(`Error starting calls: ${error.message}`);
+    }
+  }
+
+  // Load dashboard
+  async function load() {
+    try {
+      const { counts, leads } = await api('/api/leads');
+
+      document.getElementById('counts').innerHTML =
+        Object.entries(counts)
+          .map(([status, count]) =>
+            `<span>${escapeHtml(status)}: <b>${count}</b></span>`
+          )
+          .join('') || 'No numbers yet.';
+
+      document.getElementById('rows').innerHTML = leads.map((lead) => {
+        const answers = Object.entries(lead.answers || {})
+          .map(([question, answer]) =>
+            `${escapeHtml(question)}: ${escapeHtml(answer)}`
+          )
+          .join(' | ');
+
+        return `
+          <tr>
+            <td>${escapeHtml(lead.name || '-')}</td>
+            <td>${escapeHtml(lead.phone)}</td>
+            <td class="${escapeHtml(lead.status)}">${escapeHtml(lead.status)}</td>
+            <td>${answers}</td>
+          </tr>
+        `;
+      }).join('');
+    } catch (error) {
+      message('Cannot load dashboard. Check your ?key= in the URL.');
+    }
+  }
+
+  // Download qualified leads CSV
+  document.getElementById('exp').onclick = async (event) => {
+    event.preventDefault();
+
+    try {
+      const response = await fetch('/api/export?status=lead', {
+        headers: H
+      });
+
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.status}`);
+      }
+
+      const csv = await response.text();
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'qualified-leads.csv';
+      link.click();
+
+      URL.revokeObjectURL(url);
+      message('Qualified leads CSV downloaded.');
+    } catch (error) {
+      message(error.message);
+    }
+  };
+
+  load();
+  setInterval(load, 3000);
+</script>
+</body>
+</html>

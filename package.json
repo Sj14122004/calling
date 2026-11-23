@@ -1,0 +1,9 @@
+{
+  "name": "edesy-lead-caller",
+  "version": "1.0.0",
+  "description": "Outbound yes/no lead-qualification caller using the Edesy Voice API (no LLM)",
+  "main": "src/server.js",
+  "scripts": { "start": "node src/server.js", "dev": "node --watch src/server.js" },
+  "dependencies": { "dotenv": "^16.4.5", "express": "^4.19.2" },
+  "engines": { "node": ">=18" }
+}
