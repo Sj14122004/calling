@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Edesy Lead Caller</title>
+
   <style>
     body {
       font: 15px/1.5 system-ui, sans-serif;
@@ -87,7 +88,7 @@
       color: #a33;
     }
 
-    #msg {
+    #msg, #qualifiedMsg {
       font-weight: 500;
     }
 
@@ -114,7 +115,11 @@
   <!-- Manual number entry -->
   <div class="section">
     <h2>Add phone numbers manually</h2>
-    <textarea id="nums" placeholder="Paste phone numbers, one per line (10-digit Indian or +91...)"></textarea>
+
+    <textarea
+      id="nums"
+      placeholder="Paste phone numbers, one per line (10-digit Indian or +91...)"
+    ></textarea>
 
     <div class="row">
       <button onclick="addNumbers()">Add numbers</button>
@@ -125,6 +130,7 @@
 
   <div id="msg"></div>
 
+  <!-- Lead Status -->
   <h2>Lead Status</h2>
   <div class="counts" id="counts"></div>
 
@@ -140,6 +146,34 @@
     <tbody id="rows"></tbody>
   </table>
 
+  <!-- Qualified Leads -->
+  <div class="section">
+    <h2>Qualified Leads</h2>
+
+    <div class="row">
+      <strong>
+        Total qualified: <span id="qualifiedCount">0</span>
+      </strong>
+
+      <button class="alt" onclick="loadQualified()">Refresh</button>
+      <button onclick="downloadQualified()">Download Qualified CSV</button>
+    </div>
+
+    <div id="qualifiedMsg"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Phone Number</th>
+          <th>Qualified At</th>
+        </tr>
+      </thead>
+
+      <tbody id="qualifiedRows"></tbody>
+    </table>
+  </div>
+
 <script>
   const key = new URLSearchParams(location.search).get('key') || '';
 
@@ -152,7 +186,11 @@
     document.getElementById('msg').textContent = text;
   };
 
-  // Escape HTML to safely display contact data.
+  const qualifiedMessage = (text) => {
+    document.getElementById('qualifiedMsg').textContent = text;
+  };
+
+  // Escape HTML to safely display contact data
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
       '&': '&amp;',
@@ -163,6 +201,18 @@
     }[char]));
   }
 
+  // Format date/time
+  function formatDate(value) {
+    if (!value) return '-';
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) return '-';
+
+    return date.toLocaleString();
+  }
+
+  // API helper
   async function api(path, options = {}) {
     const response = await fetch(path, {
       headers: H,
@@ -177,7 +227,7 @@
     return response.json();
   }
 
-  // Manual number import
+  // Add numbers manually
   async function addNumbers() {
     try {
       const result = await api('/api/leads', {
@@ -187,16 +237,19 @@
         })
       });
 
-      message(`Added: ${result.added} | Duplicates: ${result.duplicate} | Invalid: ${result.invalid}`);
+      message(
+        `Added: ${result.added} | Duplicates: ${result.duplicate} | Invalid: ${result.invalid}`
+      );
 
       document.getElementById('nums').value = '';
+
       await load();
     } catch (error) {
       message(`Error: ${error.message}`);
     }
   }
 
-  // CSV import
+  // Import CSV
   async function importCsv() {
     const fileInput = document.getElementById('csvFile');
     const file = fileInput.files[0];
@@ -221,6 +274,7 @@
       );
 
       fileInput.value = '';
+
       await load();
     } catch (error) {
       message(`CSV import failed: ${error.message}`);
@@ -236,11 +290,11 @@
 
       message(`Calling started. Pending numbers: ${result.pending}`);
     } catch (error) {
-      message(`Error starting calls: ${error.message}`);
+      message(`Error: ${error.message}`);
     }
   }
 
-  // Load dashboard
+  // Load main dashboard
   async function load() {
     try {
       const { counts, leads } = await api('/api/leads');
@@ -273,10 +327,41 @@
     }
   }
 
-  // Download qualified leads CSV
-  document.getElementById('exp').onclick = async (event) => {
-    event.preventDefault();
+  // Load qualified leads
+  async function loadQualified() {
+    try {
+      qualifiedMessage('Loading qualified leads...');
 
+      const result = await api('/api/qualified-leads');
+      const qualified = Array.isArray(result.qualified)
+        ? result.qualified
+        : [];
+
+      document.getElementById('qualifiedCount').textContent =
+        qualified.length;
+
+      document.getElementById('qualifiedRows').innerHTML =
+        qualified.length
+          ? qualified.map((lead, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td>${escapeHtml(lead.phone || '-')}</td>
+                <td>${escapeHtml(formatDate(lead.qualifiedAt))}</td>
+              </tr>
+            `).join('')
+          : '<tr><td colspan="3">No qualified leads found.</td></tr>';
+
+      qualifiedMessage('');
+    } catch (error) {
+      qualifiedMessage(`Failed to load qualified leads: ${error.message}`);
+
+      document.getElementById('qualifiedRows').innerHTML =
+        '<tr><td colspan="3">Unable to load qualified leads.</td></tr>';
+    }
+  }
+
+  // Download qualified leads CSV
+  async function downloadQualified() {
     try {
       const response = await fetch('/api/export?status=lead', {
         headers: H
@@ -287,23 +372,39 @@
       }
 
       const csv = await response.text();
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
 
+      const blob = new Blob([csv], {
+        type: 'text/csv;charset=utf-8'
+      });
+
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
+
       link.href = url;
       link.download = 'qualified-leads.csv';
       link.click();
 
       URL.revokeObjectURL(url);
-      message('Qualified leads CSV downloaded.');
+
+      qualifiedMessage('Qualified leads CSV downloaded.');
     } catch (error) {
-      message(error.message);
+      qualifiedMessage(error.message);
     }
+  }
+
+  // Existing export button
+  document.getElementById('exp').onclick = async (event) => {
+    event.preventDefault();
+    await downloadQualified();
   };
 
+  // Initial loading
   load();
+  loadQualified();
+
+  // Auto-refresh
   setInterval(load, 3000);
+  setInterval(loadQualified, 10000);
 </script>
 </body>
 </html>

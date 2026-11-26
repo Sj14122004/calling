@@ -9,10 +9,6 @@ const dialer = require('./dialer');
 
 const DEBUG = path.join(__dirname, '..', 'data', 'debug.log');
 
-// ==========================================
-// Debug logging
-// ==========================================
-
 const dbg = (tag, req) => {
   fs.appendFile(
     DEBUG,
@@ -27,10 +23,6 @@ const dbg = (tag, req) => {
 };
 
 const merged = (req) => ({ ...req.query, ...(req.body || {}) });
-
-// ==========================================
-// CSV parser (numbers only)
-// ==========================================
 
 function parseCsv(text) {
   const lines = String(text || '')
@@ -62,11 +54,7 @@ function parseCsv(text) {
   }));
 }
 
-// ==========================================
 // Edesy qualified lead webhook
-// ==========================================
-
-// Permanently save qualified lead from Edesy Studio HTTP Request node
 router.post('/edesy/lead', (req, res) => {
   dbg('qualified-lead', req);
 
@@ -99,15 +87,13 @@ router.post('/edesy/lead', (req, res) => {
   });
 });
 
-// ==========================================
 // Edesy call status webhook
-// ==========================================
-
 router.all('/edesy/status', (req, res) => {
   dbg('status', req);
 
-  const lead = store.get(req.query.lead);
   const body = merged(req);
+  const leadId = body.lead || body.reference_id || body.referenceId;
+  const lead = store.get(leadId);
 
   const status = String(
     body.status ||
@@ -134,12 +120,7 @@ router.all('/edesy/status', (req, res) => {
   return res.sendStatus(200);
 });
 
-// ==========================================
-// Dashboard API
-// Authentication removed
-// ==========================================
-
-// Get active leads and counts
+// Get active leads
 router.get('/api/leads', (req, res) => {
   return res.json({
     counts: store.counts(),
@@ -147,7 +128,7 @@ router.get('/api/leads', (req, res) => {
   });
 });
 
-// Add manually entered numbers
+// Add phone numbers manually
 router.post('/api/leads', (req, res) => {
   return res.json(store.addMany(req.body.numbers || ''));
 });
@@ -178,7 +159,7 @@ router.post('/api/leads/import', (req, res) => {
   }
 });
 
-// Start outbound calling
+// Start outbound calls
 router.post('/api/start', (req, res) => {
   const pending = store.counts().pending || 0;
 
@@ -192,10 +173,14 @@ router.post('/api/start', (req, res) => {
   });
 });
 
-// ==========================================
-// Export leads
-// ==========================================
+// Get qualified leads (NEW)
+router.get('/api/qualified-leads', (req, res) => {
+  return res.json({
+    qualified: store.getQualified(),
+  });
+});
 
+// Export CSV
 router.get('/api/export', (req, res) => {
   const status = String(req.query.status || 'lead');
 
@@ -215,9 +200,5 @@ router.get('/api/export', (req, res) => {
 
   return res.type('text/csv').send(csv);
 });
-
-// ==========================================
-// Export router
-// ==========================================
 
 module.exports = router;

@@ -27,17 +27,32 @@ async function placeCall({ to, referenceId, statusCallbackUrl }) {
     requestBody.status_callback_url = statusCallbackUrl;
   }
 
-  const res = await fetch(edesy.base, {
-    method: 'POST',
-    headers: {
-      'X-API-Key': edesy.apiKey,
-      'Content-Type': 'application/json',
-      'Idempotency-Key': idempotencyKey,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  const startedAt = Date.now();
+
+  console.log(`[Dialer] Sending call request for ${phoneNumber}`);
+
+  let res;
+
+  try {
+    res = await fetch(edesy.base, {
+      method: 'POST',
+      headers: {
+        'X-API-Key': edesy.apiKey,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify(requestBody),
+    });
+  } catch (error) {
+    console.error(
+      `[Dialer] Network error after ${Date.now() - startedAt}ms:`,
+      error.message
+    );
+    throw error;
+  }
 
   const rawBody = await res.text();
+  const requestDuration = Date.now() - startedAt;
 
   let json = {};
 
@@ -47,6 +62,10 @@ async function placeCall({ to, referenceId, statusCallbackUrl }) {
     json = { rawResponse: rawBody };
   }
 
+  console.log(
+    `[Dialer] Edesy responded: HTTP ${res.status} in ${requestDuration}ms`
+  );
+
   if (!res.ok) {
     const details = {
       httpStatus: res.status,
@@ -54,11 +73,19 @@ async function placeCall({ to, referenceId, statusCallbackUrl }) {
       details: json.details || json.errors || null,
     };
 
-    console.error('Edesy API rejected call:', details);
+    console.error('[Dialer] Edesy API rejected call:', details);
+
     throw new Error(JSON.stringify(details));
   }
 
-  return json.data || json;
+  const callData = json.data || json;
+
+  console.log(
+    `[Dialer] Call accepted in ${requestDuration}ms`,
+    callData.call_sid || callData.sid || callData.id || ''
+  );
+
+  return callData;
 }
 
 module.exports = { placeCall };

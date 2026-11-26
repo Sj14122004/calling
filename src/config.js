@@ -19,7 +19,9 @@ module.exports = {
   adminToken: process.env.ADMIN_TOKEN || '',
 
   edesy: {
-    base: process.env.EDESY_API_URL || 'https://voice-api.edesy.in/v1/ivr/calls',
+    base:
+      process.env.EDESY_API_URL ||
+      'https://voice-api.edesy.in/v1/ivr/calls',
     apiKey: need('EDESY_API_KEY'),
     flowId: need('EDESY_FLOW_ID'),
   },
